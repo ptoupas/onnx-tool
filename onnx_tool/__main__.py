@@ -39,6 +39,11 @@ def get_parser():
         action='store_true',
         help="path to save the ONNX model with shapes")
     parser.add_argument(
+        "--metric",
+        choices=['macs', 'flops'],
+        default='macs',
+        help="choose metric to profile. macs: multiply-accumulate operations; flops: floating-point operations.")
+    parser.add_argument(
         "-f", "--file", default=None,
         help="file to store the MACs result for each node. None: print to console.")
     return parser
@@ -90,7 +95,7 @@ if args.mode == 'profile':
         dynamic = __args2dynamicshapes__(args.dynamic_shapes)
     else:
         dynamic = None
-    onnx_tool.model_profile_v2(args.in_, dynamic, args.file, args.out, dump_outputs=args.names)
+    onnx_tool.model_profile_v2(args.in_, dynamic, args.file, args.out, dump_outputs=args.names, metric=args.metric)
 elif args.mode == 'export_tensors':
     onnx_tool.model_export_tensors_numpy(args.in_, tensornames=args.names, savefolder=args.out, fp16=args.fp16)
 elif args.mode == 'rm_iden':

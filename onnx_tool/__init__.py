@@ -441,7 +441,8 @@ def model_profile(m, dynamic_shapes: {str: tuple} = None, savenode: str = None, 
 def model_profile_v2(m, dynamic_shapes: {str: tuple} = None, savenode: str = None,
                      saveshapesmodel: str = None, shapesonly: bool = False, verbose: bool = False,
                      hidden_ops: [str] = NoMacsOps,
-                     dump_outputs: [str] = None, remove_unused_tensors=True) -> None:
+                     dump_outputs: [str] = None, remove_unused_tensors=True,
+                     metric: str = 'macs') -> None:
     if isinstance(m, str):
         m = onnx.load_model(m)
     if isinstance(m, onnx.ModelProto):
@@ -456,7 +457,8 @@ def model_profile_v2(m, dynamic_shapes: {str: tuple} = None, savenode: str = Non
         G.profile()
         if verbose:
             print(f'profile all nodes, time cost {gtmr.stop():.3f} s')
-        G.print_node_map(savenode, exclude_nodes=hidden_ops)
+        op_metric = 'MACs' if metric == 'macs' else 'FLOPs'
+        G.print_node_map(savenode, metric=op_metric, exclude_nodes=hidden_ops)
 
         if saveshapesmodel is not None:
             if dump_outputs is not None:

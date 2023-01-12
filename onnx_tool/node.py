@@ -832,6 +832,8 @@ class PoolBase(Node):
                 outshape += [auto_pad_valid_shape_calc(inshape[2], self.kernel_shape[0], self.strides[0]), ]
                 if len(self.strides) == 2:
                     outshape += [auto_pad_valid_shape_calc(inshape[3], self.kernel_shape[1], self.strides[1]), ]
+                if len(self.strides) == 3:
+                    outshape += [auto_pad_valid_shape_calc(inshape[4], self.kernel_shape[2], self.strides[2]), ]
         else:
             if len(self.kernel_shape) == 1:
                 outshape = inshape[:2] + [
@@ -846,6 +848,18 @@ class PoolBase(Node):
                                        self.strides[1],
                                        self.ceil_mode),
                 ]
+            if len(self.kernel_shape) == 3:
+                outshape = inshape[:2] + [
+                    pooling_shape_calc(inshape[2], self.pads[0] + self.pads[3], self.kernel_shape[0], self.dilations[0],
+                                       self.strides[0],
+                                       self.ceil_mode),
+                    pooling_shape_calc(inshape[3], self.pads[1] + self.pads[4], self.kernel_shape[1], self.dilations[1],
+                                       self.strides[1],
+                                       self.ceil_mode),
+                    pooling_shape_calc(inshape[4], self.pads[2] + self.pads[5], self.kernel_shape[2], 1,
+                                       self.strides[2],
+                                       self.ceil_mode),
+                ]
         return [outshape, ]
 
     def profile(self, intensors: [], outtensors: []):
@@ -854,6 +868,8 @@ class PoolBase(Node):
         macs = outvol * CMP_MACS * self.kernel_shape[0]
         if len(self.kernel_shape) == 2:
             macs *= self.kernel_shape[1]
+        if len(self.kernel_shape) == 3:
+            macs *= self.kernel_shape[1] * self.kernel_shape[2]
         return macs
 
 
@@ -1316,7 +1332,15 @@ class ConvNode(Node):
                 assert 0
 
         else:
-            if len(xshape) == 4:
+            if len(xshape) == 5:
+                od = _conv_output_shape(xshape[2], self.pads[0] + self.pads[3], wshape[2], self.strides[0],
+                                        self.dilations[0])
+                oh = _conv_output_shape(xshape[3], self.pads[1] + self.pads[4], wshape[3], self.strides[1],
+                                        self.dilations[1])
+                ow = _conv_output_shape(xshape[4], self.pads[2] + self.pads[5], wshape[4], self.strides[2],
+                                        self.dilations[2])
+                shape = (xshape[0], wshape[0], od, oh, ow)
+            elif len(xshape) == 4:
                 oh = _conv_output_shape(xshape[2], self.pads[0] + self.pads[2], wshape[2], self.strides[0],
                                         self.dilations[0])
                 ow = _conv_output_shape(xshape[3], self.pads[1] + self.pads[3], wshape[3], self.strides[1],
@@ -1335,7 +1359,9 @@ class ConvNode(Node):
             if len(intensors) == 3 or len(intensors) == 2:
                 kernel_shape = _get_shape(intensors[1])
                 outvol = volume(_get_shape(outtensors[0]))
-                if len(kernel_shape) > 3:
+                if len(kernel_shape) == 5:
+                    macs += outvol * kernel_shape[1] * kernel_shape[2] * kernel_shape[3] * kernel_shape[4]
+                elif len(kernel_shape) == 4:
                     macs += outvol * kernel_shape[1] * kernel_shape[2] * kernel_shape[3]
                 elif len(kernel_shape) == 3:
                     macs += outvol * kernel_shape[1] * kernel_shape[2]
