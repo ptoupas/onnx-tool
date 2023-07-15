@@ -1,16 +1,31 @@
 import numpy
 
-from onnx_tool.node_profilers import create_ndarray_f32, create_ndarray_int64
+from onnx_tool import create_ndarray_f32, create_ndarray_int64
 
 public_models = {
     'folder': 'data/public',
     'models': [
+        {
+            'name': 'so-vits-svc.onnx',
+            'dynamic_input': {
+                'c': create_ndarray_f32((1, 10, 768)),
+                'f0': create_ndarray_f32((1, 10)),
+                'mel2ph': create_ndarray_int64((1, 10)),
+                'uv': create_ndarray_f32((1, 10)),
+                'noise': create_ndarray_f32((1, 192, 10)),
+                'sid': create_ndarray_int64(1),
+            }
+        },
         {
             'name': 'vae_encoder.onnx',
             'dynamic_input': None
         },
         {
             'name': 'vae_decoder.onnx',
+            'dynamic_input': None
+        },
+        {
+            'name': 'unet',
             'dynamic_input': None
         },
         {
@@ -309,6 +324,10 @@ public_models = {
         },
         {
             'name': 'vgg19_quanpruned.onnx',
+            'dynamic_input': None
+        },
+        {
+            'name': 'C3D-12.onnx',
             'dynamic_input': None
         },
     ]

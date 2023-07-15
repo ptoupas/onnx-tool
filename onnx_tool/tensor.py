@@ -1,7 +1,10 @@
+import warnings
+
 import numpy
 import onnx
 
 from .utils import GLOBAL_VARS
+
 
 def create_ndarray_f32(shape):
     return numpy.ones(shape, dtype=numpy.float32)
@@ -15,8 +18,10 @@ def shape_of_tensor(tensor):
     shape = []
     # for nb in tensor.shape.dim
     for nb in tensor.type.tensor_type.shape.dim:
-        assert (nb.dim_value != None)
-        shape.append(nb.dim_value)
+        if nb.HasField('dim_value'):
+            shape.append(nb.dim_value)
+        if nb.HasField('dim_param'):
+            shape.append(nb.dim_param)
     return shape
 
 
@@ -31,6 +36,8 @@ def shape_of_initializer(initial):
 def onnxdtype2npdtype(data_type):
     if data_type == onnx.TensorProto.FLOAT:
         return numpy.float32
+    if data_type == onnx.TensorProto.DOUBLE:
+        return numpy.float64
     if data_type == onnx.TensorProto.FLOAT16:
         return numpy.float16
     if data_type == onnx.TensorProto.INT32:
@@ -44,9 +51,9 @@ def onnxdtype2npdtype(data_type):
     if data_type == onnx.TensorProto.UINT8:
         return numpy.uint8
     if data_type == onnx.TensorProto.BOOL:
-        return numpy.bool
+        return numpy.bool_
     if data_type == onnx.TensorProto.STRING:
-        return numpy.str
+        return numpy.string_
 
 
 def npdtype2onnxdtype(npdtype):
@@ -66,9 +73,9 @@ def npdtype2onnxdtype(npdtype):
         return onnx.TensorProto.INT8
     if npdtype == numpy.uint8:
         return onnx.TensorProto.UINT8
-    if npdtype == numpy.bool:
+    if npdtype == numpy.bool_:
         return onnx.TensorProto.BOOL
-    if npdtype.type == numpy.bytes_:
+    if npdtype.type == numpy.string_:
         return onnx.TensorProto.STRING
 
 
@@ -80,23 +87,23 @@ def tensorproto2ndarray(initial):
         if ndtype == numpy.float32:
             arr = numpy.fromiter(initial.float_data, dtype=ndtype)
 
-        if ndtype == numpy.int32:
+        elif ndtype == numpy.int32:
             arr = numpy.fromiter(initial.int32_data, dtype=ndtype)
 
-        if ndtype == numpy.float16:
+        elif ndtype == numpy.float16:
             raw = list(initial.int32_data)
             raw = numpy.fromiter(raw, dtype=numpy.uint16)
             mem = raw.tobytes()
             arr = numpy.frombuffer(mem, dtype=numpy.float16).reshape(shape)
 
-        if ndtype == numpy.int64:
+        elif ndtype == numpy.int64:
             arr = numpy.fromiter(initial.int64_data, dtype=ndtype)
 
-        if ndtype == numpy.float64:
+        elif ndtype == numpy.float64:
             arr = numpy.fromiter(initial.double_data, dtype=ndtype)
 
-        if ndtype == numpy.str:
-            arr = numpy.array(initial.string_data, dtype="S")
+        elif ndtype == numpy.string_:
+            arr = numpy.array(initial.string_data, dtype=ndtype)
     else:
         arr = numpy.frombuffer(initial.raw_data, dtype=ndtype)
     # if len(shape):
@@ -359,12 +366,6 @@ class Tensor():
             self.numpy = tensorproto2ndarray(t)
             self.shape = self.numpy.shape
             self.type = STATIC_TENSOR
-        elif isinstance(t, Node):
-            if t.op_type == 'Constant':
-                self.name = t.output[0]
-                self.numpy = t.value
-                self.shape = self.numpy.shape
-                self.type = STATIC_TENSOR
         else:
             assert 0
         self.sparsity_search()
@@ -375,13 +376,34 @@ class Tensor():
         self.numpy = data
         self.shape = data.shape
 
+    def update_proto(self, data: numpy.ndarray):
+        self.update_tensor(data)
+        self.proto = self.make_tensor_proto()
+
     def update_shape(self, shape: list):
         if isinstance(shape, numpy.ndarray):
             assert 0
         self.shape = shape
 
+    def shape2str(self):
+        st = '['
+        for val in self.shape:
+            if isinstance(val, str):
+                st += val + ','
+            else:
+                st += str(val) + ','
+        st = st[:-1]
+        st += ']'
+        return st
+
     def get_shape(self):
-        return self.shape
+        shape = []
+        for s in self.shape:
+            if isinstance(s, str):
+                shape.append(s)
+            else:
+                shape.append(int(s))
+        return shape
 
     def get_valueorshape(self):
         if self.numpy is not None:
@@ -410,15 +432,41 @@ class Tensor():
                 blocksize, blockratio = search_sparse_blocksize(self.numpy, ratio, deltar_thres=0.1)
         self.sparsity = {'blocksize': blocksize, 'blockratio': blockratio, 'ratio': ratio}
 
-    def make_value_proto(self):
+    def make_value_proto(self, make_dummy=False):
         if len(self.shape) == 0:
-            shape = (0,)
+            if self.proto is None and make_dummy:
+                warnings.warn('Creating a dummpy tensor proto:' + self.name)
+                return onnx.helper.make_tensor_value_info(self.name, 1, None)
+            return self.proto
         else:
             shape = self.get_shape()
         if self.numpy is None:
-            dtype = onnx.TensorProto.FLOAT
+            if self.proto is not None:
+                dtype = self.proto.type.tensor_type.elem_type
+            else:
+                dtype = onnx.TensorProto.FLOAT
         else:
             dtype = npdtype2onnxdtype(self.numpy.dtype)
-        shape = [int(i) for i in shape]
+        # shape = [int(i) for i in shape]
         vinf = onnx.helper.make_tensor_value_info(self.name, dtype, shape)
         return vinf
+
+    def make_tensor_proto(self):
+        if self.numpy is None:
+            return None
+        if len(self.numpy.shape) == 0:
+            tproto = onnx.helper.make_tensor(self.name, npdtype2onnxdtype(self.numpy.dtype)
+                                             , [], [self.numpy.item()])
+        else:
+            tproto = onnx.helper.make_tensor(self.name, npdtype2onnxdtype(self.numpy.dtype)
+                                             , self.numpy.shape, self.numpy.flatten())
+        return tproto
+
+
+def create_initial_Tensor(name: str, ndarray: numpy.ndarray):
+    t = Tensor(name)
+    t.type = STATIC_TENSOR
+    t.numpy = ndarray
+    t.shape = t.numpy.shape
+    t.proto = t.make_tensor_proto()
+    return t

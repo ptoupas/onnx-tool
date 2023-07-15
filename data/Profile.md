@@ -1,19 +1,10 @@
-## Updates
-
-* v0.2.10:
-  * You can pass a list of remove ops for the profile table. This will get a more  
-    practical memory usage, e.g. Relu. See hidden_ops of model_profile.
-* v0.2.9:
-  * Support memory usage profile for each layer
-  * Export profile table to a .csv file is valid, you can use excel to operate the table
-
 ## How to use
 
 * Basic usage
     ```python
     import onnx_tool
     modelpath = 'resnet50-v1-12.onnx'
-    onnx_tool.model_profile(modelpath, None, None) # pass file name
+    onnx_tool.model_profile(modelpath) # pass file name
     onnx_tool.model_profile(modelpath, savenode='node_table.txt') # save profile table to txt file
     onnx_tool.model_profile(modelpath, savenode='node_table.csv') # save profile table to csv file
     ```
@@ -21,13 +12,14 @@
     import onnx_tool
     from torchvision.models import ResNet
     from torchvision.models.resnet import Bottleneck
-    from onnx_tool import FusedOps
-    net = ResNet(Bottleneck,[3,4,6,3],num_classes=1000) # build ResNet50 for ImageNet
-    x=torch.randn(1, 3, 224, 224)
-    torch.onnx.export(net,x,'tmp.onnx')
-    hops=list(FusedOps) # import onnx_tool's suggested ops
-    hops.extend(('Add','Flatten')) # add Add and Flatten op to hidden list
-    onnx_tool.model_profile('tmp.onnx',hidden_ops=hops)
+    import torch
+    from onnx_tool import NoMacsOps
+    net = ResNet(Bottleneck, [3, 4, 6, 3], num_classes=1000)  # build ResNet50 for ImageNet
+    x = torch.randn(1, 3, 224, 224)
+    torch.onnx.export(net, x, 'tmp.onnx')
+    hops = list(NoMacsOps)  # import onnx_tool's suggested ops
+    hops.extend(('Add', 'Flatten', 'Relu'))  # add Add and Flatten op to hidden list
+    onnx_tool.model_profile('tmp.onnx', hidden_ops=hops)# conv, Gemm, GlobalAveragePool left
     # the profile result will only contain Conv, Gemm, AveragePool, and MaxPool, 
     # which makes the table more clear for analysis
     ```
@@ -78,33 +70,36 @@
 
 * Define your custom op's node profiler.
     ```python
-    import numpy
-    import onnx
     import onnx_tool
-    from onnx_tool import NODEPROFILER_REGISTRY,NodeBase,create_ndarray_f32
+    from onnx_tool.node import _get_shape
+    from onnx_tool import create_ndarray_f32
 
-    @NODEPROFILER_REGISTRY.register()
-    class CropPlugin(NodeBase):
-        def __init__(self,nodeproto:onnx.NodeProto):
-            super().__init__(nodeproto)
-            #parse your attributes here
+    @onnx_tool.NODE_REGISTRY.register()
+    class CropPluginNode(onnx_tool.Node):
+        # you can implement either shape_infer(faster) or value_infer.
+        # it's not necessary to implement both
+        def shape_infer(self, intensors: []):
+            # if you know how to calculate shapes of this op, you can implement shape_infer
+            return [_get_shape(intensors[1])]
+        
+        #for upgrade of node_profilers.py, node_profilers.py's 'infer_shape' method should be placed
+        #as 'value_infer' method here, and do not create this class' 'shape_infer' method. 
+        def value_infer(self, intensors: []):
+            # if you don't know how to calculate the shapes of this op, you can implement value_infer.
+            shape1=intensors[1].shape
+            outtensor=intensors[:,:,:shape1[2],:shape1[3]]
+            return [outtensor]
 
-        def infer_shape(self, intensors: list[numpy.ndarray]):
-            #calculate output shapes here
-            #this node crops intensors[0] to the shape of intensors[1], just return list of intensors[1]
-            #no need to finish the true calculation, just return a ndarray of a right shape
-            return [intensors[1]]
-
-        def profile(self,intensors:list[numpy.ndarray],outtensors:list[numpy.ndarray]):
-            macs=0
-            params=0
-            #accumulate macs and params here
-            #this node has no calculation
-            return macs,params
+        def profile(self, intensors: [], outtensors: []):
+            macs = 0
+            # accumulate macs here
+            # this node has no calculation
+            return macs
 
     onnx_tool.model_profile('./rrdb_new.onnx', {'input': create_ndarray_f32((1, 3, 335, 619))},
                             savenode='rrdb_new_nodemap.txt', saveshapesmodel='rrdb_new_shapes.onnx')
     ```
+
 ## Notes
 * Parameter's statistics is very accurate now, weight sharing among nodes will be detected, and only count it for the first node.  
   You may see something like this (e.g. 'bidaf-9.onnx' ):

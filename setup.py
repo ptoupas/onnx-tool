@@ -2,9 +2,8 @@
 
 from setuptools import setup, find_packages
 
-readme = open("README.md").read()
-
-VERSION = "0.5.2"
+readme = open("README.md", encoding="utf-8").read()
+VERSION = "0.7.3"
 
 requirements = [
     "onnx",
@@ -20,10 +19,11 @@ setup(
     author_email="luoyu888888@gmail.com",
     url="https://github.com/ThanatosShinji/onnx-tool",
     description="A tool for ONNX model:"
-                "Shape inference, "
-                "MACs(FLOPs) counting for each layer, "
-                "Extract subgraph from ONNX model, or do inplace op fusion, "
-                "and any operation you can image with ONNX.",
+                "Rapid shape inference; "
+                "Profile model; "
+                "Compute Graph and Shape Engine; "
+                "OPs fusion;"
+                "Quantized models and sparse models are supported.",
     long_description=readme,
     long_description_content_type="text/markdown",
     license="MIT",

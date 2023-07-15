@@ -133,3 +133,9 @@ dmypy.json
 *.onnx
 *.csv
 
+*.cg
+*.se
+*.input
+*.output
+/data/public/unet/
+/*.cm
