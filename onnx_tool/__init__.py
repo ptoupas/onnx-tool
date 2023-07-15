@@ -88,7 +88,7 @@ def model_profile(m, dynamic_shapes: {str: tuple} = None, savenode: str = None,
     g.profile()
     g.log(f'profile all nodes, time cost {gtmr.stop():.3f} s')
     op_metric = 'MACs' if metric == 'macs' else 'FLOPs'
-    g.print_node_map(savenode, metric=op_metric, exclude_nodes=hidden_ops)
+    g.print_node_map(savenode, metric=op_metric, exclude_ops=hidden_ops)
     if saveshapesmodel is not None:
         model.save_model(saveshapesmodel, shape_only=shapesonly)
 
