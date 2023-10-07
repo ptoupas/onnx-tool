@@ -250,6 +250,8 @@ class Graph():
 
     def __is_node_constant__(self, node):
         constant_node = True
+        if node.op_type in ['DequantizeLinear']:
+            return False
         for tname in node.input:
             if self.tensormap[tname].type == DYNAMIC_TENSOR:
                 constant_node = False
@@ -273,15 +275,15 @@ class Graph():
                     if constant_folding:
                         itensors = []
                         for input in this_node.input:
+                            itensors.append(self.tensormap[input])
                             if self.tensormap[input].numpy is None:
                                 warnings.warn(f'Tensor {input} has shape only, {name} may has wrong value infer result')
-                                itensors.append(self.tensormap[input].get_shape())
-                            else:
-                                itensors.append(self.tensormap[input].numpy)
-                        otensors = this_node.value_infer(itensors)
+                        otensors = []
+                        for output in this_node.output:
+                            otensors.append(self.tensormap[output])
+                        this_node.value_infer(itensors, otensors)
                         if len(otensors) > 0:
                             for i, output in enumerate(this_node.output):
-                                self.tensormap[output].update_tensor(otensors[i])
                                 self.tensormap[output].type = STATIC_TENSOR
                     else:
                         for i, output in enumerate(this_node.output):
@@ -681,7 +683,7 @@ class Graph():
                     continue
                 value_infos.append(vinfo)
             if not with_initializer:
-                 for key in self.initials:
+                for key in self.initials:
                     tensor = self.tensormap[key]
                     vinfo = tensor.make_value_proto()
                     if vinfo is None:
@@ -700,35 +702,35 @@ class Graph():
                 produced_by[tname] = name
 
         consumed_by = {}
-        dependencies={}
+        dependencies = {}
         for name in node_names:
             node = self.nodemap[name]
-            count=0
+            count = 0
             for tname in node.input:
                 if tname in produced_by.keys():
-                    count+=1
+                    count += 1
                     if tname in consumed_by.keys():
                         consumed_by[tname].append(name)
                     else:
                         consumed_by[tname] = [name]
-            dependencies[name]=count
+            dependencies[name] = count
 
         ordered_nodes = []
-        queue =[]
+        queue = []
         while True:
             for name in node_names:
-                if dependencies[name]==0:
+                if dependencies[name] == 0:
                     queue.append(name)
                     ordered_nodes.append(name)
-                    dependencies[name]-=1
-            if len(queue)==0:
+                    dependencies[name] -= 1
+            if len(queue) == 0:
                 break
             for name in queue:
                 node = self.nodemap[name]
                 for o in node.output:
                     if o in consumed_by.keys():
                         for con in consumed_by[o]:
-                            dependencies[con]-=1
+                            dependencies[con] -= 1
             queue.clear()
         return ordered_nodes
 
@@ -814,29 +816,18 @@ class Graph():
         for key in self.nodemap.keys():
             tm.start()
             node = self.nodemap[key]
+            itensors = []
+            for input in node.input:
+                itensors.append(self.tensormap[input])
+            otensors = []
+            for output in node.output:
+                otensors.append(self.tensormap[output])
+
             if node.shape_calc:
-                itensors = []
-                for input in node.input:
-                    if self.tensormap[input].numpy is None:
-                        assert (node.op_type in ('Shape', 'Slice'))
-                        itensors.append(self.tensormap[input].get_shape())
-                    else:
-                        itensors.append(self.tensormap[input].numpy)
-                otensors = node.value_infer(itensors)
-                if len(otensors) > 0:
-                    for i, output in enumerate(node.output):
-                        self.tensormap[output].update_tensor(otensors[i])
+                node.value_infer(itensors, otensors)
             else:
-                itensors = []
-                for input in node.input:
-                    if self.tensormap[input].numpy is not None:
-                        itensors.append(self.tensormap[input].numpy)
-                    else:
-                        itensors.append(self.tensormap[input].get_shape())
-                oshapes = node.shape_infer(itensors)
-                if len(oshapes) > 0:
-                    for i, output in enumerate(node.output):
-                        self.tensormap[output].update_shape(oshapes[i])
+                node.shape_infer(itensors, otensors)
+
             if node.op_type in self.shapeinfer_optime_map.keys():
                 self.shapeinfer_optime_map[node.op_type] += tm.stop()
             else:
@@ -850,10 +841,11 @@ class Graph():
             node = self.nodemap[key]
             itensors = []
             for input in node.input:
-                itensors.append(self.tensormap[input].numpy)
-            otensors = node.value_infer(itensors)
-            for i, output in enumerate(node.output):
-                self.tensormap[output].update_tensor(otensors[i])
+                itensors.append(self.tensormap[input])
+            otensors = []
+            for output in node.output:
+                otensors.append(self.tensormap[output])
+            node.value_infer(itensors, otensors)
         outputs = []
         for output in self.output:
             outputs.append(self.tensormap[output].numpy)
@@ -1175,10 +1167,9 @@ class Graph():
         for key in self.initials:
             params_flag_map[key] = 0
 
-        self.macs = 0.0
+        self.macs = [0.0, 0.0]
         self.params = 0
         self.memory = 0
-        tensors = []
         for key in self.nodemap.keys():
             node = self.nodemap[key]
             itensors = []
@@ -1188,7 +1179,7 @@ class Graph():
             block_sparsity = {'blocksize': (1, 1), 'blockratio': 0, 'ratio': 0}
             for input in node.input:
                 tensor = self.tensormap[input]
-                itensors.append(tensor.get_valueorshape())
+                itensors.append(tensor)
                 if input in self.initials:
                     if params_flag_map[input] == 0:
                         elesize = volume(self.tensormap[input].get_shape())
@@ -1200,15 +1191,11 @@ class Graph():
                     block_sparsity = tensor.sparsity
             otensors = []
             for output in node.output:
-                if self.tensormap[output].numpy is not None:
-                    otensors.append(self.tensormap[output].numpy)
-                else:
-                    otensors.append(self.tensormap[output].get_shape())
+                otensors.append(self.tensormap[output])
                 if node.op_type == 'Constant':
                     # Constant's output tensors are already counted as weight tensors
                     continue
                 _memory += self.tensormap[output].get_memsize()
-                tensors.append(output)
             macs = node.profile(itensors, otensors)
             outshape = (0,)
             if len(node.output) > 0:
@@ -1225,7 +1212,8 @@ class Graph():
             node.params = _params
             node.memory = _memory
             node.sparsity = block_sparsity
-            self.macs += macs
+            self.macs[0] += macs[0]
+            self.macs[1] += macs[1]
             self.params += _params
             self.memory += _memory
 
@@ -1249,7 +1237,9 @@ class Graph():
 
         ptable = []
 
-        macs = int(round(self.macs))
+        forward_macs = int(round(self.macs[0]))
+        backward_macs = int(round(self.macs[1]))
+        backward_valid = backward_macs > 0
         params = int(self.params)
         memory = int(self.memory)
 
@@ -1285,7 +1275,8 @@ class Graph():
                 return '{:,}'.format(num)
 
         params += 1e-18
-        macs += 1e-18
+        forward_macs += 1e-18
+        backward_macs += 1e-18
         for key in self.nodemap.keys():
             node = self.nodemap[key]
             if exclude_ops is not None and node.op_type in exclude_ops:
@@ -1296,8 +1287,11 @@ class Graph():
                 row.append(tuple2str(sparsity['blocksize'], splitch))
                 row.append('{:.2%}'.format(sparsity['blockratio']))
                 row.append('{:.2%}'.format(sparsity['ratio']))
-            row.append(num2str(int(node.macs) * factor, csvformat))
-            row.append('{:.2%}'.format(node.macs / macs))
+            row.append(num2str(int(node.macs[0]) * factor, csvformat))
+            row.append('{:.2%}'.format(node.macs[0] / forward_macs))
+            if backward_valid:
+                row.append(num2str(int(node.macs[1]) * factor, csvformat))
+                row.append('{:.2%}'.format(node.macs[1] / backward_macs))
             row.append(num2str(int(node.memory), csvformat))
             row.append('{:.2%}'.format(node.memory / memory))
             row.append(num2str(int(node.params), csvformat))
@@ -1311,8 +1305,11 @@ class Graph():
             row.append('_')
             row.append('_')
             row.append('_')
-        row.append(num2str(int(macs * factor), csvformat))
+        row.append(num2str(int(forward_macs * factor), csvformat))
         row.append('100%')
+        if backward_valid:
+            row.append(num2str(int(backward_macs * factor), csvformat))
+            row.append('100%')
         row.append(num2str(int(memory), csvformat))
         row.append('100%')
         row.append(num2str(int(params), csvformat))
@@ -1326,8 +1323,15 @@ class Graph():
             header.append('Sparse Pattern')
             header.append('Sparse Block Ratio')
             header.append('Sparse Ratio')
-        header.extend([metric, 'CPercent', 'Memory', 'MPercent', 'Params', 'PPercent', 'InShape',
-                       'OutShape'])
+        header.extend(
+            ['Forward_' + metric, 'FPercent'])
+        if backward_valid:
+            header.extend(
+                ['Backward_' + metric, 'BPercent'])
+        header.extend(
+            ['Memory', 'MPercent', 'Params',
+             'PPercent', 'InShape',
+             'OutShape'])
 
         if f is None:
             print(tabulate(ptable, headers=header))

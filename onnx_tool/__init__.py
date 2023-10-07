@@ -7,9 +7,9 @@ import onnx
 from .graph import Graph
 from .model import Model
 from .node import NODE_REGISTRY, Node
-from .serialization import serialize_shape_engine, serialize_graph
+from .serialization import serialize_graph, serialize_shape_engine
 from .tensor import create_ndarray_f32, create_ndarray_int64
-from .utils import timer, VERSION
+from .utils import VERSION, timer
 
 
 def loadmodel(f, verbose: bool = False, constant_folding: bool = True, noderename: bool = False):
